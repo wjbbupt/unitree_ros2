@@ -9,7 +9,7 @@
 #include <rclcpp/node.hpp>
 #include <rclcpp/qos.hpp>
 
-#include "b2_base_client.hpp"
+#include "common/b2_base_client.hpp"
 #include "common/ut_errror.hpp"
 #include "nlohmann/json.hpp"
 #include "patch.hpp"

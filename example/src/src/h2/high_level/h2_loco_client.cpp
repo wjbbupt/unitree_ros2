@@ -187,6 +187,10 @@ private:
             {
                 std::cout << "Call failed, ret: " << ret << std::endl;
             }
+            else
+            {
+                std::cout << "Call OK, ret: " << ret << std::endl;
+            }
         }
     }
 
