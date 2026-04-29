@@ -63,7 +63,7 @@ public:
     req.header.identity.id = unitree::common::GetSystemUptimeInNanoseconds();
     current_request_id_.store(req.header.identity.id);
 
-    req_puber_->publish(req);
+        req_puber_->publish(req);
     std::unique_lock<std::mutex> response_lock(response_mutex_);
     auto start_time = std::chrono::steady_clock::now();
     const std::chrono::seconds timeout(5);
@@ -78,6 +78,10 @@ public:
 
         if (received_response_->header.status.code != 0) {
             return received_response_->header.status.code;
+        }
+        if (received_response_->data.empty()) {
+            js = nlohmann::json::object();
+            return UT_ROBOT_SUCCESS;
         }
 
         try {
@@ -141,10 +145,6 @@ private:
     if (expected_id != 0 && resp_id == expected_id) {
         {
             std::lock_guard<std::mutex> lk(response_mutex_);
-            if (data->data.empty()) {
-                response_ready_ = false;
-                return;
-            }
             received_response_ = data;
             response_ready_ = true;
         }
