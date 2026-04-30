@@ -151,30 +151,22 @@ private:
             }
             else if (test_option_.name == "set_fsm_id")
             {
-                // Same behavior style as b2 demo: fixed parameter.
                 ret = client_.SetFsmId(4);
             }
             else if (test_option_.name == "set_velocity")
             {
-                // Fixed: vx vy omega duration
-                // Align with b2 demo `Move(req, 0.0, 0.0, 0.5)` style.
-                ret = client_.SetVelocity(0.0F, 0.0F, 0.5F, 1.0F);
+                ret = client_.SetVelocity(0.0F, 0.0F, 1.0F, 4.0F);
             }
             else if (test_option_.name == "move")
             {
-                // Fixed: vx vy omega
-                // Align with b2 demo `Move(req, 0.0, 0.0, 0.5)` style.
-                ret = client_.Move(0.0F, 0.0F, 0.5F);
+                ret = client_.Move(0.0F, 0.0F, 2.0F);
             }
             else if (test_option_.name == "switch_move_mode")
             {
-                // Fixed: enable continuous move mode.
                 ret = client_.SwitchMoveMode(true);
             }
             else if (test_option_.name == "set_speed_mode")
             {
-                // Fixed: speed_mode
-                // Align with b2 demo `SpeedLevel(req, 1)` style.
                 ret = client_.SetSpeedMode(1);
             }
             else
@@ -204,7 +196,6 @@ int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<H2LocoClientNode>();
-    // `common/b2_base_client.hpp` spins this node internally, so do not add it to another executor.
     while (rclcpp::ok())
     {
         std::this_thread::sleep_for(200ms);
