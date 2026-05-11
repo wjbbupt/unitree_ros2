@@ -1,20 +1,27 @@
+#include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cctype>
 #include <iostream>
 #include <map>
+#include <poll.h>
 #include <string>
 #include <thread>
+#include <unistd.h>
+#include <vector>
 
-#include <rclcpp/executors/multi_threaded_executor.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 #include "a2/a2_sport_client.hpp"
+
+namespace {
 
 struct TestOption {
   std::string name;
   int id;
 };
 
-static const std::vector<TestOption> option_list = {
+const std::vector<TestOption> option_list = {
     {"damp", 0},
     {"balance_stand", 1},
     {"stop_move", 2},
@@ -37,62 +44,117 @@ static const std::vector<TestOption> option_list = {
     {"euler", 19},
 };
 
-static int ConvertToInt(const std::string& str) {
-  try {
-    return std::stoi(str);
-  } catch (const std::exception&) {
-    return -1;
+/** Blocks until one line is available or rclcpp shuts down (Ctrl+C). */
+bool ReadStdinLine(std::string* line) {
+  while (rclcpp::ok()) {
+    pollfd pfd{};
+    pfd.fd = STDIN_FILENO;
+    pfd.events = POLLIN;
+    const int pr = poll(&pfd, 1, 200);
+    if (pr < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    if (pr == 0) {
+      continue;
+    }
+    if (pfd.revents & (POLLERR | POLLNVAL)) {
+      return false;
+    }
+    if (pfd.revents & POLLIN) {
+      return static_cast<bool>(std::getline(std::cin, *line));
+    }
   }
+  return false;
 }
 
-class UserInterface {
- public:
-  void terminalHandle() {
-    std::string input;
-    std::getline(std::cin, input);
+static void Trim(std::string* s) {
+  if (!s || s->empty()) {
+    return;
+  }
+  auto not_space = [](unsigned char c) { return !std::isspace(c); };
+  s->erase(s->begin(), std::find_if(s->begin(), s->end(), not_space));
+  s->erase(std::find_if(s->rbegin(), s->rend(), not_space).base(), s->end());
+}
 
-    if (input == "list") {
-      for (const auto& option : option_list) {
-        std::cout << option.name << ", id: " << option.id << std::endl;
-      }
-      return;
+/** list / blank / unknown => *run_sport false; matched item => true. */
+void ParseMenuLine(const std::string& raw, TestOption* selected,
+                   bool* run_sport) {
+  *run_sport = false;
+  std::string input = raw;
+  Trim(&input);
+  if (input.empty()) {
+    return;
+  }
+  if (input == "list") {
+    for (const auto& it : option_list) {
+      std::cout << it.name << ", id: " << it.id << std::endl;
     }
+    return;
+  }
 
-    for (const auto& option : option_list) {
-      if (input == option.name || ConvertToInt(input) == option.id) {
-        test_option_->id = option.id;
-        test_option_->name = option.name;
-        std::cout << "Test: " << test_option_->name
-                  << ", test_id: " << test_option_->id << std::endl;
-      }
+  int id = -1;
+  try {
+    id = std::stoi(input);
+  } catch (const std::exception&) {
+    id = -1;
+  }
+
+  for (const auto& it : option_list) {
+    if (input == it.name || (id >= 0 && id == it.id)) {
+      *selected = it;
+      std::cout << "Test: " << selected->name << ", test_id: " << selected->id
+                << std::endl;
+      *run_sport = true;
+      return;
     }
   }
 
-  TestOption* test_option_{nullptr};
-};
+  std::cout << "Unknown command. Input \"list\" or a valid name / id."
+            << std::endl;
+}
+
+}  // namespace
 
 class A2SportClientNode : public rclcpp::Node {
  public:
   A2SportClientNode()
       : Node("a2_sport_client_node"), sport_client_(this) {
-    test_option_.id = 1;
-    user_interface_.test_option_ = &test_option_;
-    t1_ = std::thread([this] {
+    selection_.id = 1;
+    selection_.name = "balance_stand";
+    worker_ = std::thread([this] {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
-      run();
+      Run();
     });
   }
 
-  void run() {
+  ~A2SportClientNode() override {
+    if (worker_.joinable()) {
+      worker_.join();
+    }
+  }
+
+ private:
+  void Run() {
     std::cout << "Input \"list\" to list all test option ..." << std::endl;
     while (rclcpp::ok()) {
-      auto time_start = std::chrono::high_resolution_clock::now();
-      static constexpr auto dt = std::chrono::microseconds(20000);  // 50Hz
+      std::string line;
+      if (!ReadStdinLine(&line)) {
+        return;
+      }
+      bool run_sport = false;
+      ParseMenuLine(line, &selection_, &run_sport);
+      if (!rclcpp::ok()) {
+        return;
+      }
+      if (!run_sport) {
+        continue;
+      }
 
-      user_interface_.terminalHandle();
-
-      unitree_api::msg::Request req;
-      switch (test_option_.id) {
+      unitree_api::msg::Request req{};
+      switch (selection_.id) {
         case 0:
           sport_client_.Damp(req);
           break;
@@ -120,13 +182,13 @@ class A2SportClientNode : public rclcpp::Node {
         case 8: {
           std::map<std::string, std::string> state_map;
           (void)sport_client_.GetState(state_map);
-          std::cout << "fsm_id: " << state_map["fsm_id"] << std::endl;
-          std::cout << "fsm_name: " << state_map["fsm_name"] << std::endl;
+            std::cout << "fsm_id: " << state_map["fsm_id"] << std::endl;
+            std::cout << "fsm_name: " << state_map["fsm_name"] << std::endl;
           std::cout << "speed_level: " << state_map["speed_level"] << std::endl;
-          std::cout << "auto_recovery_switch: "
-                    << state_map["auto_recovery_switch"] << std::endl;
-          std::cout << "process_state: " << state_map["process_state"]
-                    << std::endl;
+            std::cout << "auto_recovery_switch: "
+                      << state_map["auto_recovery_switch"] << std::endl;
+            std::cout << "process_state: " << state_map["process_state"]
+                      << std::endl;
           break;
         }
         case 9:
@@ -163,27 +225,25 @@ class A2SportClientNode : public rclcpp::Node {
           sport_client_.Euler(req, 0.2F, 0.3F, 0.3F);
           break;
         default:
+          std::cout << "Unknown option." << std::endl;
           break;
       }
-
-      std::this_thread::sleep_until(time_start + dt);
     }
   }
 
- private:
   unitree::robot::a2::SportClient sport_client_;
-  TestOption test_option_;
-  UserInterface user_interface_;
-  std::thread t1_;
+  TestOption selection_;
+  std::thread worker_;
 };
 
 int main(int argc, char** argv) {
   rclcpp::init(argc, argv);
-  auto node = std::make_shared<A2SportClientNode>();
-  rclcpp::executors::MultiThreadedExecutor executor;
-  executor.add_node(node);
-  executor.spin();
+  {
+    auto node = std::make_shared<A2SportClientNode>();
+    while (rclcpp::ok()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  }
   rclcpp::shutdown();
   return 0;
 }
-

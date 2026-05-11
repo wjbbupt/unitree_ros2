@@ -63,14 +63,15 @@ public:
     req.header.identity.id = unitree::common::GetSystemUptimeInNanoseconds();
     current_request_id_.store(req.header.identity.id);
 
-        req_puber_->publish(req);
+    req_puber_->publish(req);
     std::unique_lock<std::mutex> response_lock(response_mutex_);
-    auto start_time = std::chrono::steady_clock::now();
-    const std::chrono::seconds timeout(5);
+    const std::chrono::milliseconds timeout = req.binary.empty()
+        ? std::chrono::seconds(5)
+        : std::chrono::seconds(30);
 
-    if (response_cv_.wait_for(response_lock, timeout, [this]() { 
-        return response_ready_; 
-    })) {
+    if (response_cv_.wait_for(response_lock, timeout, [this]() {
+          return response_ready_;
+        })) {
 
         if (!received_response_) {
             return UT_ROBOT_TASK_UNKNOWN_ERROR;
@@ -86,8 +87,6 @@ public:
 
         try {
             js = nlohmann::json::parse(received_response_->data.data());
-            auto end_time = std::chrono::steady_clock::now();
-            auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
             return UT_ROBOT_SUCCESS;
         } catch (const nlohmann::detail::exception& e) {
             return UT_ROBOT_TASK_UNKNOWN_ERROR;

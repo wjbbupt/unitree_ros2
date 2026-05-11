@@ -2,8 +2,8 @@
  * This example demonstrates how to use ROS2 to call audio client api of unitree
  *a2 robot
  **/
+#include <algorithm>
 #include <fstream>
-#include <rclcpp/executors.hpp>
 #include <thread>
 #include <vector>
 
@@ -233,11 +233,24 @@ auto Control(std::shared_ptr<unitree::robot::a2::AudioClient> client,
             << " filestate =" << filestate << std::endl;
 
   if (filestate && sample_rate == 16000 && num_channels == 1) {
-    ret = client->PlayStream(
-        "example",
-        std::to_string(unitree::common::GetCurrentTimeMilliseconds()), pcm);
-    std::cout << "start play ,ret : " << ret << std::endl;
-    std::this_thread::sleep_for(std::chrono::seconds(3));
+    constexpr size_t kPlayChunkBytes = 16000;  // 0.5 s @ 16 kHz mono s16le
+    const std::string stream_id =
+        std::to_string(unitree::common::GetCurrentTimeMilliseconds());
+    for (size_t offset = 0; offset < pcm.size();) {
+      const size_t chunk_len = std::min(kPlayChunkBytes, pcm.size() - offset);
+      std::vector<uint8_t> chunk(
+          pcm.begin() + static_cast<std::ptrdiff_t>(offset),
+          pcm.begin() + static_cast<std::ptrdiff_t>(offset + chunk_len));
+      ret = client->PlayStream("example", stream_id, chunk);
+      if (offset == 0) {
+        std::cout << "start play ,ret : " << ret << std::endl;
+      }
+      offset += chunk_len;
+      if (offset < pcm.size()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(2));
     std::cout << "stop play" << std::endl;
     ret = client->PlayStop("example");
   } else {
@@ -266,13 +279,15 @@ int main(int argc, char **argv) {
 
   try {
     rclcpp::init(argc, argv);
-    auto client = std::make_shared<unitree::robot::a2::AudioClient>();
-    auto thread_ = std::thread([client, audio_file_path]() {
-      using namespace std::chrono_literals;
-      std::this_thread::sleep_for(1s);
-      Control(client, audio_file_path);
-    });
-    rclcpp::spin(client);
+    {
+      auto client = std::make_shared<unitree::robot::a2::AudioClient>();
+      std::thread worker([client, audio_file_path]() {
+        using namespace std::chrono_literals;
+        std::this_thread::sleep_for(1s);
+        Control(client, audio_file_path);
+      });
+      worker.join();
+    }
     rclcpp::shutdown();
   } catch (const rclcpp::exceptions::RCLError &e) {
     std::cerr << "RCLError caught: " << e.what() << std::endl;

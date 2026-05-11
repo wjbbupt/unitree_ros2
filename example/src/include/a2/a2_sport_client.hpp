@@ -2,11 +2,10 @@
 
 #include <cstdint>
 #include <map>
-#include <memory>
-#include <rclcpp/node.hpp>
-#include <rclcpp/qos.hpp>
 #include <string>
 
+#include <rclcpp/node.hpp>
+#include <rclcpp/qos.hpp>
 #include "nlohmann/json.hpp"
 #include "patch.hpp"
 #include "common/b2_base_client.hpp"
@@ -37,17 +36,14 @@ constexpr int32_t ROBOT_SPORT_API_ID_GETSTATE = 1034;
 constexpr int32_t ROBOT_SPORT_API_ID_SETAUTORECOVERY = 1040;
 
 class SportClient {
-  rclcpp::Node* node_;
   rclcpp::Publisher<unitree_api::msg::Request>::SharedPtr req_puber_;
   BaseClient base_client_;
 
  public:
   explicit SportClient(rclcpp::Node* node)
-      : node_(node),
-        base_client_(node_, "/api/sport/request", "/api/sport/response") {
-    req_puber_ = node_->create_publisher<unitree_api::msg::Request>(
-        "/api/sport/request", rclcpp::QoS(10));
-  }
+      : req_puber_(node->create_publisher<unitree_api::msg::Request>(
+            "/api/sport/request", rclcpp::QoS(10))),
+        base_client_(node, "/api/sport/request", "/api/sport/response") {}
 
   void Damp(unitree_api::msg::Request& req) {
     req.header.identity.api_id = ROBOT_SPORT_API_ID_DAMP;
@@ -206,4 +202,3 @@ class SportClient {
 };
 
 }  // namespace unitree::robot::a2
-
