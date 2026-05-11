@@ -1,7 +1,5 @@
-#include <algorithm>
 #include <cerrno>
 #include <chrono>
-#include <cctype>
 #include <iostream>
 #include <map>
 #include <poll.h>
@@ -45,7 +43,7 @@ const std::vector<TestOption> option_list = {
 };
 
 /** Blocks until one line is available or rclcpp shuts down (Ctrl+C). */
-bool ReadStdinLine(std::string* line) {
+static bool ReadStdinLine(std::string* line) {
   while (rclcpp::ok()) {
     pollfd pfd{};
     pfd.fd = STDIN_FILENO;
@@ -70,51 +68,53 @@ bool ReadStdinLine(std::string* line) {
   return false;
 }
 
-static void Trim(std::string* s) {
-  if (!s || s->empty()) {
-    return;
-  }
-  auto not_space = [](unsigned char c) { return !std::isspace(c); };
-  s->erase(s->begin(), std::find_if(s->begin(), s->end(), not_space));
-  s->erase(std::find_if(s->rbegin(), s->rend(), not_space).base(), s->end());
-}
-
-/** list / blank / unknown => *run_sport false; matched item => true. */
-void ParseMenuLine(const std::string& raw, TestOption* selected,
-                   bool* run_sport) {
-  *run_sport = false;
-  std::string input = raw;
-  Trim(&input);
-  if (input.empty()) {
-    return;
-  }
-  if (input == "list") {
-    for (const auto& it : option_list) {
-      std::cout << it.name << ", id: " << it.id << std::endl;
-    }
-    return;
-  }
-
-  int id = -1;
+static int ConvertToInt(const std::string& str) {
   try {
-    id = std::stoi(input);
-  } catch (const std::exception&) {
-    id = -1;
+    return std::stoi(str);
+  } catch (...) {
+    return -1;
   }
-
-  for (const auto& it : option_list) {
-    if (input == it.name || (id >= 0 && id == it.id)) {
-      *selected = it;
-      std::cout << "Test: " << selected->name << ", test_id: " << selected->id
-                << std::endl;
-      *run_sport = true;
-      return;
-    }
-  }
-
-  std::cout << "Unknown command. Input \"list\" or a valid name / id."
-            << std::endl;
 }
+
+class UserInterface {
+ public:
+  bool terminalHandle() {
+    std::string input;
+    if (!ReadStdinLine(&input)) {
+      return false;
+    }
+
+    if (input.empty()) {
+      return true;
+    }
+
+    if (input == "list") {
+      for (const auto& option : option_list) {
+        std::cout << option.name << ", id: " << option.id << std::endl;
+      }
+      return true;
+    }
+
+    const int id = ConvertToInt(input);
+    for (const auto& option : option_list) {
+      if (input == option.name || (id >= 0 && id == option.id)) {
+        test_option_->id = option.id;
+        test_option_->name = option.name;
+        std::cout << "Test: " << test_option_->name
+                  << ", test_id: " << test_option_->id << std::endl;
+        *run_sport_ = true;
+        return true;
+      }
+    }
+
+    std::cout << "Unknown command. Input \"list\" or a valid name / id."
+              << std::endl;
+    return true;
+  }
+
+  TestOption* test_option_{nullptr};
+  bool* run_sport_{nullptr};
+};
 
 }  // namespace
 
@@ -124,6 +124,8 @@ class A2SportClientNode : public rclcpp::Node {
       : Node("a2_sport_client_node"), sport_client_(this) {
     selection_.id = 1;
     selection_.name = "balance_stand";
+    ui_.test_option_ = &selection_;
+    ui_.run_sport_ = &run_sport_;
     worker_ = std::thread([this] {
       std::this_thread::sleep_for(std::chrono::milliseconds(500));
       Run();
@@ -140,16 +142,14 @@ class A2SportClientNode : public rclcpp::Node {
   void Run() {
     std::cout << "Input \"list\" to list all test option ..." << std::endl;
     while (rclcpp::ok()) {
-      std::string line;
-      if (!ReadStdinLine(&line)) {
+      run_sport_ = false;
+      if (!ui_.terminalHandle()) {
         return;
       }
-      bool run_sport = false;
-      ParseMenuLine(line, &selection_, &run_sport);
       if (!rclcpp::ok()) {
         return;
       }
-      if (!run_sport) {
+      if (!run_sport_) {
         continue;
       }
 
@@ -181,9 +181,13 @@ class A2SportClientNode : public rclcpp::Node {
           break;
         case 8: {
           std::map<std::string, std::string> state_map;
-          (void)sport_client_.GetState(state_map);
-            std::cout << "fsm_id: " << state_map["fsm_id"] << std::endl;
-            std::cout << "fsm_name: " << state_map["fsm_name"] << std::endl;
+          const int32_t ret = sport_client_.GetState(state_map);
+          if (ret != 0) {
+            std::cout << "GetState failed, ret: " << ret << std::endl;
+            break;
+          }
+          std::cout << "fsm_id: " << state_map["fsm_id"] << std::endl;
+          std::cout << "fsm_name: " << state_map["fsm_name"] << std::endl;
           std::cout << "speed_level: " << state_map["speed_level"] << std::endl;
             std::cout << "auto_recovery_switch: "
                       << state_map["auto_recovery_switch"] << std::endl;
@@ -233,6 +237,8 @@ class A2SportClientNode : public rclcpp::Node {
 
   unitree::robot::a2::SportClient sport_client_;
   TestOption selection_;
+  bool run_sport_{false};
+  UserInterface ui_;
   std::thread worker_;
 };
 
